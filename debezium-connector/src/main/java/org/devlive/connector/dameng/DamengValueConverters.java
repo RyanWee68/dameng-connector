@@ -43,6 +43,8 @@ import static io.debezium.util.NumberConversions.BYTE_FALSE;
 public class DamengValueConverters
         extends JdbcValueConverters
 {
+    private static final String NULL_LITERAL = "NULL";
+
     private static final Pattern INTERVAL_DAY_SECOND_PATTERN = Pattern.compile("([+\\-])?(\\d+) (\\d+):(\\d+):(\\d+).(\\d+)");
 
     private static final ZoneId GMT_ZONE_ID = ZoneId.of("GMT");
@@ -294,6 +296,9 @@ public class DamengValueConverters
     @Override
     protected Object convertInteger(Column column, Field fieldDefn, Object data)
     {
+        if (isNullLiteral(data)) {
+            data = null;
+        }
         if (data instanceof String) {
             data = data.toString().trim();
         }
@@ -357,16 +362,25 @@ public class DamengValueConverters
 
     protected Object convertNumericAsTinyInt(Column column, Field fieldDefn, Object data)
     {
+        if (isNullLiteral(data)) {
+            data = null;
+        }
         return convertTinyInt(column, fieldDefn, data);
     }
 
     protected Object convertNumericAsSmallInt(Column column, Field fieldDefn, Object data)
     {
+        if (isNullLiteral(data)) {
+            data = null;
+        }
         return super.convertSmallInt(column, fieldDefn, data);
     }
 
     protected Object convertNumericAsInteger(Column column, Field fieldDefn, Object data)
     {
+        if (isNullLiteral(data)) {
+            data = null;
+        }
         // 如果数据是字符串类型，先进行trim处理
         if (data instanceof String) {
             data = ((String) data).trim();
@@ -377,6 +391,9 @@ public class DamengValueConverters
 
     protected Object convertNumericAsBigInteger(Column column, Field fieldDefn, Object data)
     {
+        if (isNullLiteral(data)) {
+            data = null;
+        }
         return super.convertBigInt(column, fieldDefn, data);
     }
 
@@ -404,21 +421,30 @@ public class DamengValueConverters
     @Override
     protected Object convertTinyInt(Column column, Field fieldDefn, Object data)
     {
-        return convertValue(column, fieldDefn, data, BYTE_FALSE, (r) -> {
-            if (data instanceof Byte) {
-                r.deliver(data);
+        if (isNullLiteral(data)) {
+            data = null;
+        }
+        final Object convertedData = data;
+        return convertValue(column, fieldDefn, convertedData, BYTE_FALSE, (r) -> {
+            if (convertedData instanceof Byte) {
+                r.deliver(convertedData);
             }
-            else if (data instanceof Number) {
-                Number value = (Number) data;
+            else if (convertedData instanceof Number) {
+                Number value = (Number) convertedData;
                 r.deliver(value.byteValue());
             }
-            else if (data instanceof Boolean) {
-                r.deliver(NumberConversions.getByte((boolean) data));
+            else if (convertedData instanceof Boolean) {
+                r.deliver(NumberConversions.getByte((boolean) convertedData));
             }
-            else if (data instanceof String) {
-                r.deliver(Byte.parseByte(String.valueOf(data).trim()));
+            else if (convertedData instanceof String) {
+                r.deliver(Byte.parseByte(String.valueOf(convertedData).trim()));
             }
         });
+    }
+
+    static boolean isNullLiteral(Object data)
+    {
+        return data instanceof String && NULL_LITERAL.equalsIgnoreCase(((String) data).trim());
     }
 
     protected Object convertVariableScale(Column column, Field fieldDefn, Object data)
