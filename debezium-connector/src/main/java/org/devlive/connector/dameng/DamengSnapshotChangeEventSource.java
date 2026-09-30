@@ -236,11 +236,17 @@ public class DamengSnapshotChangeEventSource<P extends Partition>
     protected void readTableStructure(ChangeEventSourceContext sourceContext, RelationalSnapshotContext<P, DamengOffsetContext> snapshotContext, DamengOffsetContext offsetContext)
             throws SQLException, InterruptedException
     {
-        // Ensure the captured tables record the before-image of every column in the redo log; otherwise
-        // an UPDATE only logs the primary-key (and changed) columns and the reconstructed after-image would
-        // contain null for every unchanged column (issue #17).
-        for (TableId tableId : snapshotContext.capturedTables) {
-            LogMinerHelper.enableTableSupplementalLoggingAllColumns(jdbcConnection, tableId);
+        if (connectorConfig.isSupplementalLoggingAutoEnable()) {
+            // Ensure the captured tables record the before-image of every column in the redo log; otherwise
+            // an UPDATE only logs the primary-key (and changed) columns and the reconstructed after-image would
+            // contain null for every unchanged column (issue #17).
+            for (TableId tableId : snapshotContext.capturedTables) {
+                LogMinerHelper.enableTableSupplementalLoggingAllColumns(jdbcConnection, tableId);
+            }
+        }
+        else {
+            LOGGER.info("Skipping automatic supplemental logging DDL for captured tables. "
+                    + "Set database.supplemental.logging.auto.enable=true to enable the best-effort Oracle-compatible DDL.");
         }
 
         Set<String> schemas = snapshotContext.capturedTables.stream()

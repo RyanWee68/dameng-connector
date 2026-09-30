@@ -464,23 +464,8 @@ public class LogMinerHelper
      */
     public static void enableTableSupplementalLoggingAllColumns(DamengConnection connection, TableId tableId)
     {
-        try {
-            if (isTableSupplementalLogDataAll(connection, tableId)) {
-                LOGGER.debug("Supplemental logging (ALL) COLUMNS already enabled for table {}", tableId);
-                return;
-            }
-            // Build the target from schema/table only; the captured TableId also carries the catalog,
-            // which is not a valid qualifier for ALTER TABLE.
-            final String qualifiedName = "\"" + tableId.schema() + "\".\"" + tableId.table() + "\"";
-            final String sql = "ALTER TABLE " + qualifiedName + " ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS";
-            LOGGER.info("Enabling supplemental logging (ALL) COLUMNS for table {}: {}", tableId, sql);
-            connection.executeLegacy(sql);
-        }
-        catch (SQLException e) {
-            LOGGER.warn("Could not enable supplemental logging (ALL) COLUMNS for table {}. Updates may emit null for "
-                    + "unchanged columns. Please run manually: ALTER TABLE {}.{} ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS",
-                    tableId, tableId.schema(), tableId.table(), e);
-        }
+        LOGGER.info("Skipping supplemental logging (ALL) COLUMNS DDL for table {} because Dameng does not support "
+                + "Oracle ADD SUPPLEMENTAL LOG DATA syntax.", tableId);
     }
 
     static boolean isTableSupplementalLogDataAll(DamengConnection connection, TableId tableId)

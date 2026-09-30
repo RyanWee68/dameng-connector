@@ -130,6 +130,15 @@ public class DamengConnectorConfig
                     + "without AS OF SCN; the snapshot is then not point-in-time consistent, but any changes made "
                     + "during the snapshot are replayed from the streaming phase (at-least-once), which is safe for "
                     + "idempotent sinks that upsert by primary key.");
+    public static final Field SUPPLEMENTAL_LOGGING_AUTO_ENABLE = Field.create("database.supplemental.logging.auto.enable")
+            .withDisplayName("Automatically enable table supplemental logging")
+            .withType(Type.BOOLEAN)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDefault(false)
+            .withValidation(Field::isBoolean)
+            .withDescription("Whether the connector should try to execute table-level supplemental logging DDL during schema snapshot. "
+                    + "This is disabled by default because Dameng may not support Oracle's ADD SUPPLEMENTAL LOG DATA syntax.");
     public static final Field LOG_MINING_HISTORY_RECORDER_CLASS = Field.create("log.mining.history.recorder.class")
             .withDisplayName("Log Mining History Recorder Class")
             .withType(Type.STRING)
@@ -307,6 +316,7 @@ public class DamengConnectorConfig
             .connector(
                     SNAPSHOT_ENHANCEMENT_TOKEN,
                     SNAPSHOT_FLASHBACK_QUERY,
+                    SUPPLEMENTAL_LOGGING_AUTO_ENABLE,
                     RAC_SYSTEM,
                     RAC_NODES,
                     LOG_MINING_HISTORY_RECORDER_CLASS,
@@ -351,6 +361,7 @@ public class DamengConnectorConfig
     private final Long autoCommitTimeout;
     private final LogMiningDmlParser dmlParser;
     private final boolean snapshotFlashbackQuery;
+    private final boolean supplementalLoggingAutoEnable;
 
     public DamengConnectorConfig(Configuration config)
     {
@@ -375,6 +386,7 @@ public class DamengConnectorConfig
         this.jdbcConfig = config.subset(DATABASE_CONFIG_PREFIX, true);
         this.snapshotEnhancementToken = config.getString(SNAPSHOT_ENHANCEMENT_TOKEN);
         this.snapshotFlashbackQuery = config.getBoolean(SNAPSHOT_FLASHBACK_QUERY);
+        this.supplementalLoggingAutoEnable = config.getBoolean(SUPPLEMENTAL_LOGGING_AUTO_ENABLE);
 
         // LogMiner
         this.connectorAdapter = ConnectorAdapter.parse(config.getString(CONNECTOR_ADAPTER));
@@ -482,6 +494,11 @@ public class DamengConnectorConfig
     public boolean isSnapshotFlashbackQuery()
     {
         return snapshotFlashbackQuery;
+    }
+
+    public boolean isSupplementalLoggingAutoEnable()
+    {
+        return supplementalLoggingAutoEnable;
     }
 
     /**

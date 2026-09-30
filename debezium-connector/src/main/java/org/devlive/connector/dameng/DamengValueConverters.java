@@ -17,6 +17,7 @@ import io.debezium.relational.ValueConverter;
 import io.debezium.time.Date;
 import io.debezium.util.NumberConversions;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 
@@ -178,6 +179,11 @@ public class DamengValueConverters
                 return getNumericConverter(column, fieldDefn);
             case Types.FLOAT:
                 return data -> convertVariableScale(column, fieldDefn, data);
+            case Types.BIT:
+                if (fieldDefn != null && fieldDefn.schema().type() == Schema.Type.BOOLEAN || column.length() <= 1) {
+                    return data -> convertBoolean(column, fieldDefn, data);
+                }
+                break;
         }
 
         return super.converter(column, fieldDefn);
