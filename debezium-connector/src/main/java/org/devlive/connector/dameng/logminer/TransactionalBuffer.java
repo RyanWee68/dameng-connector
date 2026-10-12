@@ -184,7 +184,7 @@ public final class TransactionalBuffer
         }
 
         LOGGER.trace("COMMIT, {}, smallest SCN: {}", debugMessage, smallestScn);
-        LOGGER.info("Committing transaction {} with {} buffered DML events at SCN {}", transactionId, transaction.events.size(), scn);
+        LOGGER.debug("Committing transaction {} with {} buffered DML events at SCN {}", transactionId, transaction.events.size(), scn);
         commit(context, offsetContext, start, transaction, timestamp, smallestScn, scn, dispatcher);
         return true;
     }

@@ -520,15 +520,18 @@ public class DamengStreamingChangeEventSourceMetrics
         LOGGER.debug("Updating sleep time window. Sleep time {}. Min sleep time {}. Max sleep time {}.", sleepTime, sleepTimeMin, sleepTimeMax);
     }
 
+    public void validateBatchSizeBounds()
+    {
+        if (batchSizeMin <= 0 || batchSizeMin > batchSizeDefault || batchSizeDefault > batchSizeMax) {
+            throw new IllegalArgumentException("Log mining batch sizes must satisfy 0 < min <= default <= max");
+        }
+    }
+
     public void changeBatchSize(boolean increment)
     {
-        int currentBatchSize = batchSize.get();
-        if (increment && currentBatchSize < batchSizeMax) {
-            currentBatchSize = batchSize.addAndGet(batchSizeMin);
-        }
-        else if (currentBatchSize > batchSizeMin) {
-            currentBatchSize = batchSize.addAndGet(-batchSizeMin);
-        }
+        validateBatchSizeBounds();
+        int currentBatchSize = batchSize.updateAndGet(current -> (int) Math.max(batchSizeMin,
+                Math.min(batchSizeMax, increment ? (long) current * 2 : (long) current - batchSizeMin)));
 
         if (currentBatchSize == batchSizeMax) {
             LOGGER.info("LogMiner is now using the maximum batch size {}. This could be indicative of large SCN gaps", currentBatchSize);

@@ -222,7 +222,7 @@ public class DamengConnectorConfig
             .withImportance(Importance.LOW)
             .withDefault(MIN_BATCH_SIZE)
             .withDescription(
-                    "The minimum SCN interval size that this connector will try to read from redo/archive logs. Active batch size will be also increased/decreased by this amount for tuning connector throughput when needed.");
+                    "The minimum SCN interval size that this connector will try to read from redo/archive logs. Active batch size doubles when catching up and decreases by this amount when near the current database SCN, within configured bounds.");
     protected static final int MAX_BATCH_SIZE = 100_000;
     public static final Field LOG_MINING_BATCH_SIZE_MAX = Field.create("log.mining.batch.size.max")
             .withDisplayName("Maximum batch size for reading redo/archive logs.")

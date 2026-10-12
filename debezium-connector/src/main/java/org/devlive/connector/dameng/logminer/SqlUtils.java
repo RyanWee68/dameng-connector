@@ -209,24 +209,9 @@ public class SqlUtils
      */
     static String startLogMinerStatement(Scn startScn, Scn endScn, DamengConnectorConfig.LogMiningStrategy strategy, boolean isContinuousMining)
     {
-//        String miningStrategy;
-//        if (strategy.equals(DamengConnectorConfig.LogMiningStrategy.CATALOG_IN_REDO)) {
-//            // miningStrategy = "DBMS_LOGMNR.DICT_FROM_REDO_LOGS + DBMS_LOGMNR.DDL_DICT_TRACKING ";
-//            miningStrategy = "DBMS_LOGMNR.DICT_FROM_REDO_LOGS ";
-//        }
-//        else {
-//            miningStrategy = "DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG ";
-//        }
-//        if (isContinuousMining) {
-//            miningStrategy += " + DBMS_LOGMNR.CONTINUOUS_MINE ";
-//        }
-//        return "BEGIN sys.dbms_logmnr.start_logmnr(" +
-//                "startScn => '" + startScn + "', " +
-//                "endScn => '" + endScn + "', " +
-//                "OPTIONS => " + miningStrategy +
-//                " + DBMS_LOGMNR.NO_ROWID_IN_STMT);" +
-//                "END;";
-        return "BEGIN DBMS_LOGMNR.START_LOGMNR(OPTIONS => DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG); END;";
+        // Bound analysis/loading as well as the subsequent SELECT; retain its exclusive lower bound.
+        return "BEGIN DBMS_LOGMNR.START_LOGMNR(STARTSCN => " + startScn + ", ENDSCN => " + endScn
+                + ", OPTIONS => DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG); END;";
     }
 
     /**

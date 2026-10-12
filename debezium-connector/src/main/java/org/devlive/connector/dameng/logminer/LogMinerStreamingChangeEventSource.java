@@ -128,6 +128,7 @@ public class LogMinerStreamingChangeEventSource
     {
         try (TransactionalBuffer transactionalBuffer = new TransactionalBuffer(schema, clock, errorHandler, streamingMetrics, connectorConfig.getAutoCommitTimeoutMs())) {
             try {
+                streamingMetrics.validateBatchSizeBounds();
                 startScn = offsetContext.getScn();
                 createFlushTable(jdbcConnection);
 
@@ -193,7 +194,7 @@ public class LogMinerStreamingChangeEventSource
                         }
                         else {
                             if (isContinuousMining1) {
-                                LOGGER.info("Ending log mining startScn={}, endScn={}, offsetContext.getScn={}, strategy={}, continuous={}",
+                                LOGGER.debug("Ending log mining startScn={}, endScn={}, offsetContext.getScn={}, strategy={}, continuous={}",
                                         startScn, endScn, offsetContext.getScn(), strategy, isContinuousMining);
                                 endMining(jdbcConnection);
                                 initializeRedoLogsForMining(jdbcConnection, true, archiveLogRetention);
@@ -202,11 +203,6 @@ public class LogMinerStreamingChangeEventSource
                             }
                         }
                         startLogMining(jdbcConnection, startScn, endScn, strategy, isContinuousMining, streamingMetrics);
-
-                        int count = jdbcConnection.queryAndMap(
-                                "SELECT COUNT(*) FROM V$LOGMNR_CONTENTS",
-                                rs -> rs.next() ? rs.getInt(1) : 0);
-                        LOGGER.debug("Find V$LOGMNR_CONTENTS count: {}", count);
 
                         stopwatch.start();
 
