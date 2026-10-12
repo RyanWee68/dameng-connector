@@ -72,10 +72,6 @@ debezium.source.transaction.auto.commit.timeout.ms=0
 
 使用 Flink DataStream Builder 时通过 `.property("debezium.source.transaction.auto.commit.timeout.ms", "0")` 传入。升级前默认值为 `1000` 毫秒；已有配置若显式指定了正数，升级后仍会启用超时自动提交，需要改为 `0` 才能等待真实 COMMIT。
 
-**正数超时有一致性风险**：该时间从连接器最后一次读取该事务 DML 时计算，无法证明数据库已经提交。超时发送的变更在数据库随后回滚时无法撤回。要求只同步已提交数据时，应保持为 `0`。
-
-严格等待 COMMIT 时，长事务会占用缓冲内存，并可能阻止恢复位点前进；应保证数据库日志保留时间覆盖事务持续时间和消费延迟。若 LogMiner 未返回 COMMIT，该事务会继续等待。将 `log.mining.transaction.retention.hours` 设为正数可能主动丢弃长事务，造成其变更缺失。
-
 LogMiner 查询按 `SCN, RS_ID, SSN` 排序，确保按日志顺序处理 DML、SQL 续片和事务结束事件，避免 COMMIT 提前于尚未处理的 DML 清空缓冲区。另已修复自动提交路径中事务末尾 SCN 未随 DML 更新的问题。
 
 需要诊断事务提交时，可将 `org.devlive.connector.dameng.logminer.TransactionalBuffer` 日志级别设为 DEBUG，查看事务号、缓冲 DML 条数和提交 SCN，例如：
@@ -83,8 +79,6 @@ LogMiner 查询按 `SCN, RS_ID, SSN` 排序，确保按日志顺序处理 DML、
 ```text
 Committing transaction ... with 3468 buffered DML events at SCN ...
 ```
-
-已在测试库验证单次 `INSERT INTO ... SELECT ...` 影响 3,468 行时，Sink 接收条数为 3,468。核对其他场景时应比较本次操作前后的 Sink 接收条数增量；最大编码不能证明没有重复或中间缺号。回滚、重启恢复和更大事务仍需按实际环境验证。
 
 ### 自适应扫描窗口
 
@@ -96,19 +90,15 @@ log.mining.batch.size.min=5000
 log.mining.batch.size.max=100000
 ```
 
-`min` 同时控制最小窗口和缩窗步长，不再控制扩窗步长。配置必须满足 `0 < min <= default <= max`。当数据库当前 SCN 超过本轮窗口终点的差距大于 `default` 时，下一轮窗口倍增，例如 `20000 → 40000 → 80000 → 100000`；当本轮计划终点超过数据库当前 SCN 的差距大于 `default` 时，下一轮按 `min` 缩窗。窗口达到最大值后保持上限，超过上限的事务继续分轮读取，并跨轮缓存至真实 COMMIT。本轮不引入按耗时自适应策略；较大窗口可能增加单轮耗时和数据库资源消耗，需按实际环境验证。
+`min` 同时控制最小窗口和缩窗步长，不再控制扩窗步长。配置必须满足 `0 < min <= default <= max`。当数据库当前 SCN 超过本轮窗口终点的差距大于 `default` 时，下一轮窗口倍增，例如 `20000 → 40000 → 80000 → 100000`；当本轮计划终点超过数据库当前 SCN 的差距大于 `default` 时，下一轮按 `min` 缩窗。窗口达到最大值后保持上限，超过上限的事务继续分轮读取，并跨轮缓存至真实 COMMIT。
 
 正式版本已移除本轮临时的逐阶段、逐轮汇总、解析计时、事务发送计时、文件候选和 JDBC 调用日志，也不执行诊断用 `COUNT(*)` 查询。保留原有指标、错误、告警及必要运行日志；事务提交详情仅在 DEBUG 输出。独立的 dm_test 是测试程序，不属于本仓库的发布产物。
 
-启动挖掘继续使用 [达梦官方支持的 STARTSCN / ENDSCN](https://eco.dameng.com/document/dm/zh-cn/pm/dbms_logmnr-package) 限制分析或加载范围；正式读取仍为 `SCN > startScn AND SCN <= endScn`。不改变排序、会话重建或真实 COMMIT 提交规则，不启用数据库侧 COMMITTED_DATA_ONLY。会话复用未验证，本轮不调整。
-
-复测需核对本次接收条数增量、跨窗口事务及上下限行为，并检查未提交事务不输出、ROLLBACK 丢弃。条数和最大编码不能证明逐条唯一性；单元测试不能代替数据库验证。Checkpoint 成功也不能单独证明 CDC 已追到某个事务。
+启动挖掘继续使用 [达梦官方支持的 STARTSCN / ENDSCN](https://eco.dameng.com/document/dm/zh-cn/pm/dbms_logmnr-package) 限制分析或加载范围；正式读取仍为 `SCN > startScn AND SCN <= endScn`。不改变排序、会话重建或真实 COMMIT 提交规则，不启用数据库侧 COMMITTED_DATA_ONLY。
 
 ### 可行性与风险
 
-测试库单事务插入 13,056 行的三轮结果：1000 线性步进约 50.1 秒 / 14 轮，5000 线性步进约 47.8 秒 / 10 轮，倍增约 39.9 秒 / 6 轮。计时从首轮扫描开始至事务分发调用返回，不是从业务提交开始，也不是 Sink 持久化完成时间。三轮 Sink 最终计数均为 13,056；这不是严格同条件性能基准，也不能证明无重复、无缺失。
-
-推荐倍增作为有限积压下的追赶策略，但不据此承诺全表大事务的容量、延迟或端到端恰好一次语义。窗口上限限制单轮 SCN 范围，不限制整个事务的内存；严格等待 COMMIT 时，全表修改和长期未提交事务仍可能造成堆内存压力。上线评审、待验证场景及回退方式见 [可行性与风险记录](docs/feasibility-and-risks.md)。
+项目仍存在大事务容量、性能及数据一致性风险，详细说明、测试结果与验收建议见 [可行性与风险记录](docs/feasibility-and-risks.md)。
 
 ## 版本兼容性
 
