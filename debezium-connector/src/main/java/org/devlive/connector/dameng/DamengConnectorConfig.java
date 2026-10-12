@@ -280,8 +280,8 @@ public class DamengConnectorConfig
             .withType(Type.LONG)
             .withWidth(Width.MEDIUM)
             .withImportance(Importance.MEDIUM)
-            .withDefault(1000L)
-            .withDescription("The time in milliseconds after which an uncommitted transaction will be auto-committed.");
+            .withDefault(0L)
+            .withDescription("The inactivity timeout in milliseconds for auto-committing an uncommitted transaction. Set to 0 to emit changes only after a database COMMIT.");
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DamengConnectorConfig.class);
     private final String databaseName;

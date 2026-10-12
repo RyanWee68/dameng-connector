@@ -19,7 +19,7 @@ Dameng Connector 是一个专门为达梦数据库(DM Database)设计的变更�
 1. **克隆仓库**
 
 ```bash
-git clone https://github.com/yourusername/dameng-connector.git
+git clone https://github.com/RyanWee68/dameng-connector.git
 cd dameng-connector
 ```
 
@@ -47,7 +47,7 @@ curl -X POST -H "Content-Type: application/json" --data @dm-connector.json http:
 
 | 选项                   | 描述       | 默认值                                  | 必填 |
 |----------------------|----------|--------------------------------------|----|
-| connector.class      | 连接器类名    | io.debezium.connector.dm.DMConnector | 是  |
+| connector.class      | 连接器类名    | org.devlive.connector.dameng.DamengConnector | 是  |
 | database.hostname    | 达梦数据库主机名 | -                                    | 是  |
 | database.port        | 达梦数据库端口号 | 5236                                 | 是  |
 | database.user        | 数据库用户名   | -                                    | 是  |
@@ -57,12 +57,41 @@ curl -X POST -H "Content-Type: application/json" --data @dm-connector.json http:
 | table.include.list   | 需要捕获的表列表 | -                                    | 否  |
 | snapshot.mode        | 快照模式     | initial                              | 否  |
 | transforms           | 转换配置     | -                                    | 否  |
+| debezium.source.transaction.auto.commit.timeout.ms | 未提交事务的静默超时，单位毫秒；0 禁用自动提交 | 0 | 否 |
+| log.mining.transaction.retention.hours | 长事务缓冲保留期限，单位小时；0 不主动丢弃 | 0 | 否 |
+
+### 事务提交与大事务捕获
+
+连接器默认等待数据库真实的 `COMMIT` 后才发送缓冲区中的 DML；收到 `ROLLBACK` 时丢弃对应变更。未提交事务即使长时间没有新 DML，也不会因超时被发送。
+
+在应用的 properties 文件中设置，并将属性传给连接器：
+
+```properties
+debezium.source.transaction.auto.commit.timeout.ms=0
+```
+
+使用 Flink DataStream Builder 时通过 `.property("debezium.source.transaction.auto.commit.timeout.ms", "0")` 传入。升级前默认值为 `1000` 毫秒；已有配置若显式指定了正数，升级后仍会启用超时自动提交，需要改为 `0` 才能等待真实 COMMIT。
+
+**正数超时有一致性风险**：该时间从连接器最后一次读取该事务 DML 时计算，无法证明数据库已经提交。超时发送的变更在数据库随后回滚时无法撤回。要求只同步已提交数据时，应保持为 `0`。
+
+严格等待 COMMIT 时，长事务会占用缓冲内存，并可能阻止恢复位点前进；应保证数据库日志保留时间覆盖事务持续时间和消费延迟。若 LogMiner 未返回 COMMIT，该事务会继续等待。将 `log.mining.transaction.retention.hours` 设为正数可能主动丢弃长事务，造成其变更缺失。
+
+LogMiner 查询按 `SCN, RS_ID, SSN` 排序，确保按日志顺序处理 DML、SQL 续片和事务结束事件，避免 COMMIT 提前于尚未处理的 DML 清空缓冲区。另已修复自动提交路径中事务末尾 SCN 未随 DML 更新的问题。
+
+提交时会打印事务号、缓冲区中的 DML 条数和提交 SCN，例如：
+
+```text
+Committing transaction ... with 3468 buffered DML events at SCN ...
+```
+
+已在测试库验证单次 `INSERT INTO ... SELECT ...` 影响 3,468 行时，Sink 接收条数为 3,468。核对其他场景时应比较本次操作前后的 Sink 接收条数增量；最大编码不能证明没有重复或中间缺号。回滚、重启恢复和更大事务仍需按实际环境验证。
 
 ## 版本兼容性
 
 | 本项目版本    | Debezium 版本 | 达梦数据库版本 |
 |----------|-------------|---------|
 | 2025.1.0 | 1.9.x       | 8.x     |
+| 2026.1.0 | 1.9.8.Final | 8.x     |
 
 ## 贡献指南
 

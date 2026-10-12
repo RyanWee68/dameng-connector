@@ -109,7 +109,7 @@ public final class TransactionalBuffer
         Transaction transaction = transactions.computeIfAbsent(transactionId, s -> new Transaction(transactionId, scn));
         transaction.events.add(new DmlEvent(operation, parseEntry, scn, tableId, rowId));
 
-        // 来记录最后更新时间
+        transaction.lastScn = scn;
         transaction.lastUpdateTime = Instant.now();
 
         streamingMetrics.setActiveTransactions(transactions.size());
@@ -184,6 +184,7 @@ public final class TransactionalBuffer
         }
 
         LOGGER.trace("COMMIT, {}, smallest SCN: {}", debugMessage, smallestScn);
+        LOGGER.info("Committing transaction {} with {} buffered DML events at SCN {}", transactionId, transaction.events.size(), scn);
         commit(context, offsetContext, start, transaction, timestamp, smallestScn, scn, dispatcher);
         return true;
     }
@@ -264,8 +265,8 @@ public final class TransactionalBuffer
      * 检查长时间未提交的事务，自动提交它们
      * <p>
      * 在处理完LogMiner查询结果后，检查所有已注册但尚未提交的事务。
-     * 如果某个事务超过一定时间没有更新（默认为1秒），系统会自动提交它。
-     * 这样，即使LogMiner没有捕获到COMMIT事件，操作也能被正确处理和提交。
+     * 如果配置了正数超时，某个事务超过该时间没有更新时，系统会自动提交它。
+     * 正数超时不能证明数据库已提交；需要严格等待COMMIT时应配置为0。
      */
     void checkAndAutoCommitTransactions(
             DamengOffsetContext offsetContext,
@@ -273,6 +274,10 @@ public final class TransactionalBuffer
             EventDispatcher<MapBackedPartition, TableId> dispatcher
     )
     {
+        if (autoCommitTimeoutMs <= 0) {
+            return;
+        }
+
         Instant now = Instant.now();
         Set<String> transactionsToCommit = new LinkedHashSet<>();
 
@@ -410,7 +415,7 @@ public final class TransactionalBuffer
         private final String transactionId;
         private final Scn firstScn;
         private final List<DmlEvent> events;
-        private final Scn lastScn;
+        private Scn lastScn;
         private Instant lastUpdateTime;
 
         private Transaction(String transactionId, Scn firstScn)

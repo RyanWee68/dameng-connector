@@ -292,6 +292,8 @@ public class SqlUtils
         }
 
         query.append("))");
+        // Process DML before its COMMIT and keep continued SQL fragments together.
+        query.append(" ORDER BY SCN, RS_ID, SSN");
 
         return query.toString();
     }

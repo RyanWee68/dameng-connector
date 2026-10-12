@@ -61,8 +61,8 @@ public class DamengDebeziumConnectorTest
         // 暂时不能使用 "fast" 会导致部分字段解析失败
 //        props.setProperty("internal.log.mining.dml.parser", "legacy");
 
-        // 自动提交未提交事务的时间（以毫秒为单位）。
-        props.setProperty("debezium.source.transaction.auto.commit.timeout.ms", "2000");
+        // 0 表示只在数据库提交事务后发送变更。
+        props.setProperty("debezium.source.transaction.auto.commit.timeout.ms", "0");
 
         engine = DebeziumEngine.create(Json.class)
                 .using(props)
