@@ -162,21 +162,39 @@ INSERT INTO "TEST"."T00003" ("ID", "NAME", "AGE") VALUES (9, '刘十一', 27);
 INSERT INTO "TEST"."T00003" ("ID", "NAME", "AGE") VALUES (10, '陈十二', 33);
 ```
 
-## 2. 配置兼容模式
+## 2. 参数配置范围与兼容模式
 
-需要开启兼容模式，以确保 CDC 功能正常工作：
+本次测试反馈修改了以下 `dm.ini` 参数，最终以测试实例的有效值为准：
 
-```sql
--- 开启兼容模式，需要重启服务器，或者修改 dm.ini
-SP_SET_PARA_VALUE(2,'compatible_mode',2);
-SELECT para_name,para_type,para_value FROM V$DM_INI WHERE PARA_NAME = 'COMPATIBLE_MODE';
+```ini
+ARCH_INI = 1
+RLOG_APPEND_LOGIC = 2
+LOGMNR_PARSE_LOB = 1
 ```
 
-**注意**：修改兼容模式后，需要重启数据库服务才能生效。您也可以直接在 dm.ini 文件中修改配置项。
+| 参数 | 作用 | 注意事项 |
+|---|---|---|
+| `ARCH_INI=1` | 启用归档配置 | 还需有效的 `dmarch.ini` 归档目的地，并确认数据库处于归档模式。 |
+| `RLOG_APPEND_LOGIC=2` | 记录逻辑操作；UPDATE、DELETE 不论是否有主键都包含全列信息 | 相比模式 1，可能增加日志量、归档空间和写入 I/O。 |
+| `LOGMNR_PARSE_LOB=1` | 支持 LogMiner 挖掘行外 BLOB、CLOB 大字段逻辑日志 | 有大字段时需评估解析、传输和程序内存开销，并验证字段内容完整性。 |
+
+只修改这三项不代表实例没有其他既有配置。还需核实 `RLOG_IGNORE_TABLE_SET`：值为 1 时记录所有表的逻辑日志；值为 0 时，需对捕获表执行 `ALTER TABLE "模式名"."表名" ADD LOGIC LOG`。
+
+`COMPATIBLE_MODE=2` 为 Oracle 兼容模式，未确认本次测试是否修改，不能作为本次已开启项或所有部署的必改项。先查询现有值，仅在目标版本联调确认需要时再调整：
+
+```sql
+SELECT para_name,para_type,para_value FROM V$DM_INI WHERE PARA_NAME = 'COMPATIBLE_MODE';
+-- 仅在确认需要 Oracle 兼容模式后执行，写入配置文件，重启后生效
+-- SP_SET_PARA_VALUE(2,'COMPATIBLE_MODE',2);
+```
+
+**注意**：兼容模式为静态参数，修改后需重启，可能影响现有 SQL、数据类型及操作结果。生产变更前应完成业务回归，并准备维护窗口及回退方案。
 
 ## 3. 开启归档日志
 
 CDC 功能依赖于数据库的归档日志模式：
+
+先查询 `SELECT * FROM V$DM_ARCH_INI` 和 `SELECT ARCH_MODE FROM V$DATABASE`。以下示例用于尚未开启归档的数据库，已有归档目的地不要重复添加。`MOUNT` 会影响业务访问，生产操作需安排维护窗口。
 
 ```sql
 -- 开启归档
@@ -186,35 +204,47 @@ ALTER DATABASE ADD ARCHIVELOG 'DEST = /data/dameng/data/DAMENG/archivelog, TYPE 
 ALTER DATABASE OPEN;
 ```
 
-## 4. 开启闪回功能
+示例中的 `FILE_SIZE=1024` 为单文件上限，`SPACE_LIMIT=2048` 为总容量上限，单位均为 MB。约 2 GB 的总上限不是生产推荐值：容量不足可能自动清理 CDC 恢复仍需使用的旧归档；设为 0 不限制容量，又可能写满磁盘。应按开启逻辑日志后的实际生成速率、长事务及故障恢复保留时间规划容量和告警。
 
-配置闪回功能以支持 CDC 操作：
+## 4. 闪回功能（按初始化方式选择）
+
+本次只做增量同步，不读取已有历史行，可使用 `snapshot.mode=schema_only`，无需为历史数据初始化额外开启 `ENABLE_FLASHBACK`。结构采集和起始位置初始化仍需执行，不能据此认为启动过程完全无锁。
+
+如果以后采用历史数据初始化，连接器默认 `snapshot.flashback.enabled=true`，会使用 `AS OF SCN` 查询，需确认数据库闪回能力及历史保留满足要求。确需开启时可执行：
 
 ```sql
--- 设置回闪
+-- 仅在使用闪回历史查询的方案中执行
 SP_SET_PARA_VALUE(1,'ENABLE_FLASHBACK',1);
 SELECT para_name,para_value FROM V$DM_INI WHERE PARA_NAME ='ENABLE_FLASHBACK';
 ```
 
-## 5. 开启日志追加模式（关键步骤）
+也可配置 `snapshot.flashback.enabled=false` 使用普通 SELECT，但这不自动保证历史快照与增量的一致性，也不会消除代码中的显式表锁。不能仅靠调整 JDBC 事务模式就承诺无锁且一致的历史初始化。
 
-**重要**：此步骤是确保 CDC 正常工作的关键，如果不配置，`V$LOGMNR_CONTENTS` 视图可能始终为空，导致无法捕获数据变更。
+## 5. 逻辑日志与大字段解析（关键步骤）
+
+LogMiner 需要可挖掘的逻辑操作日志。本次反馈使用 `RLOG_APPEND_LOGIC=2`，不应写成“必须为 1”：模式 1 在有主键时 UPDATE、DELETE 只包含主键列信息，模式 2 则包含全列信息。参数变化只影响后续生成的相关日志，不会补齐旧日志缺失的字段。
+
+`LOGMNR_PARSE_LOB=1` 用于行外大字段解析。关闭时，在使用在线字典拼写 SQL 的场景下，BLOB、CLOB 内容可能以 `OUT_BLOB`、`OUT_CLOB` 占位；开启后仍需验证连接器到 Sink 的完整字段处理。
 
 ```sql
--- 注意：这里一定要处理，设置为 1 否则 V$LOGMNR_CONTENTS 一直是 0 导致获取不到数据
--- 开启日志追加：修改 dm.ini 配置项 RLOG_APPEND_LOGIC=1 重启服务
-
--- 查询是否是追加模式
-SELECT para_name, para_value FROM v$dm_ini WHERE para_name = 'RLOG_APPEND_LOGIC';
+-- 当前官方手册中两项均为动态系统参数，scope=1 修改内存及配置文件
+SP_SET_PARA_VALUE(1,'RLOG_APPEND_LOGIC',2);
+SP_SET_PARA_VALUE(1,'LOGMNR_PARSE_LOB',1);
 ```
 
-您需要直接修改 dm.ini 配置文件，添加或修改以下配置项：
+也可直接修改 `dm.ini` 中对应配置，再按重启流程加载。静态参数和动态参数的生效方式应按实际达梦版本确认；修改文件后不能仅凭文件内容判断运行实例已生效。
 
-```
-RLOG_APPEND_LOGIC=1
+```sql
+-- 对照当前参数与配置文件值，另核实归档模式和目的地
+SELECT PARA_NAME, PARA_VALUE, FILE_VALUE
+FROM V$DM_INI
+WHERE PARA_NAME IN (
+    'ARCH_INI', 'RLOG_APPEND_LOGIC', 'LOGMNR_PARSE_LOB',
+    'RLOG_IGNORE_TABLE_SET', 'COMPATIBLE_MODE', 'ENABLE_FLASHBACK'
+);
 ```
 
-**注意**：修改 dm.ini 后需要重启数据库服务才能生效。
+参数说明依据：[达梦物理存储及参数说明](https://eco.dameng.com/document/dm/zh-cn/pm/physical-storage)、[DBMS_LOGMNR 包](https://eco.dameng.com/document/dm/zh-cn/pm/dbms_logmnr-package)。
 
 ## 6. 数据库服务启动
 
@@ -238,16 +268,17 @@ ps -ef | grep dmserver
 [debezium-damengconnector-my-dameng-connector-2025-0226-change-event-source-coordinator] INFO io.debezium.connector.dameng.logminer.LogMinerQueryResultProcessor - 1 Rows, 0 DMLs, 0 Commits, 0 Rollbacks, 0 Inserts, 0 Updates, 0 Deletes. Processed in 0 millis. Lag:0. Offset scn:50684. Offset commit scn:null. Active transactions:0. Sleep time:3000
 ```
 
-如果看到 `0 Rows` 的输出，请检查是否正确配置了所有步骤，特别是日志追加模式设置。
+空闲时出现 `0 Rows` 不一定异常，上述 `0 DMLs` 日志也不能证明已捕获业务变更。应执行并提交 INSERT、UPDATE、DELETE，核对目标端事件及字段；有大字段时增加 BLOB、CLOB 内容检查。若提交后仍持续无变化，再排查归档、逻辑日志范围、起始位置和表过滤配置。
 
 ## 8. 常见问题排查
 
 如果遇到问题，可以检查以下几点：
 
-1. 确认兼容模式设置为 2
-2. 确认数据库处于归档日志模式
-3. 确认闪回功能已开启
-4. 确认 RLOG_APPEND_LOGIC 设置为 1
-5. 确认所有需要重启服务的配置都已生效
+1. 确认归档配置已启用、数据库处于归档模式，目的地有效且空间充足。
+2. 核实本次使用的 `RLOG_APPEND_LOGIC=2`，以及全库或表级逻辑日志范围已覆盖捕获表。
+3. 捕获行外大字段时核实 `LOGMNR_PARSE_LOB=1`，并检查实际字段内容。
+4. 仅增量方案无需为历史初始化开启闪回；使用 `AS OF SCN` 初始化时才核实相应能力和保留时间。
+5. 兼容模式按现有值和联调结果判断，不直接要求改为 2；确认所有参数已按其生效方式加载。
+6. 确认业务事务已提交、起始位置及表过滤正确，恢复所需归档未被提前清理。
 
 *备注：本项目不是达梦数据库官方项目，由社区维护和开发。*
